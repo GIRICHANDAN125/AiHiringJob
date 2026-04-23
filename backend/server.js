@@ -7,25 +7,32 @@ const logger = require('./utils/logger');
 
 const PORT = process.env.PORT || 5000;
 
-// 🔥 DEBUG (remove later)
-console.log("DB_HOST:", process.env.DB_HOST);
-console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_NAME:", process.env.DB_NAME);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD);
+// DEBUG (optional)
+console.log("NODE_ENV:", process.env.NODE_ENV);
 
 const startServer = async () => {
   try {
-    await connectDB();
-    logger.info('✅ Database connected');
+
+    // 👉 Only connect DB in local (NOT in production)
+    if (process.env.NODE_ENV !== "production") {
+      await connectDB();
+      logger.info('✅ Database connected');
+    } else {
+      logger.info('⚠️ Skipping DB connection in production (temporary)');
+    }
 
     app.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
     });
 
   } catch (error) {
-    console.error("FULL ERROR:", error); // 🔥 important
+    console.error("FULL ERROR:", error);
     logger.error('❌ Failed to start server:', error.message);
-    process.exit(1);
+
+    // 👉 Don't crash in production
+    if (process.env.NODE_ENV !== "production") {
+      process.exit(1);
+    }
   }
 };
 
@@ -33,10 +40,8 @@ startServer();
 
 process.on('unhandledRejection', (err) => {
   console.error("Unhandled Rejection:", err);
-  process.exit(1);
 });
 
 process.on('uncaughtException', (err) => {
   console.error("Uncaught Exception:", err);
-  process.exit(1);
 });
