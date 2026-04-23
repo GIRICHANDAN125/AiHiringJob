@@ -19,8 +19,13 @@ const app = express();
 
 // Security
 app.use(helmet());
+
+// ✅ FIXED CORS
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: [
+    "http://localhost:3000",
+    "https://ai-hiring-job.vercel.app"
+  ],
   credentials: true,
 }));
 
@@ -32,7 +37,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Auth rate limit (stricter)
+// Auth rate limit
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -47,7 +52,7 @@ app.use(morgan('combined', {
   stream: { write: (msg) => logger.info(msg.trim()) }
 }));
 
-// Static file serving for uploads
+// Static
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check
@@ -68,7 +73,7 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Global error handler
+// Error handler
 app.use(errorHandler);
 
 module.exports = app;
