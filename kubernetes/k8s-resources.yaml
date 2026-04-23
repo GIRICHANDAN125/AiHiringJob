@@ -1,0 +1,120 @@
+# ========================
+# Services
+# ========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: ai-hiring
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: ai-hiring
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+# ========================
+# ConfigMap (non-secret config)
+# ========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-hiring-config
+  namespace: ai-hiring
+data:
+  NODE_ENV: "production"
+  PORT: "5000"
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "ai_hiring_db"
+  CLICKHOUSE_HOST: "clickhouse-service"
+  CLICKHOUSE_PORT: "8123"
+  JWT_EXPIRES_IN: "15m"
+  JWT_REFRESH_EXPIRES_IN: "7d"
+  UPLOAD_DIR: "/app/uploads"
+---
+# ========================
+# Secret (fill before applying!)
+# ========================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ai-hiring-secrets
+  namespace: ai-hiring
+type: Opaque
+stringData:
+  JWT_SECRET: "CHANGE_THIS_IN_PRODUCTION"
+  JWT_REFRESH_SECRET: "CHANGE_THIS_IN_PRODUCTION_TOO"
+  DB_USER: "postgres"
+  DB_PASSWORD: "CHANGE_THIS_PASSWORD"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  SMTP_USER: "your@email.com"
+  SMTP_PASS: "your_app_password"
+  EMAIL_FROM: "noreply@yourdomain.com"
+---
+# ========================
+# PersistentVolumeClaim (uploads)
+# ========================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: ai-hiring
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+---
+# ========================
+# Ingress
+# ========================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-hiring-ingress
+  namespace: ai-hiring
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - yourdomain.com
+      secretName: ai-hiring-tls
+  rules:
+    - host: yourdomain.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 5000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80

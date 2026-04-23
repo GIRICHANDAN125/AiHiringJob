@@ -1,0 +1,27 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Env files (VERY IMPORTANT)
+.env
+.env.*
+frontend/.env
+backend/.env
+
+# Build files
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# Uploads
+uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker optional ignore
+docker-compose.override.yml
