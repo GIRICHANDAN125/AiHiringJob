@@ -48,7 +48,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/analytics/dashboard')
+    api.get('/api/analytics/dashboard')
       .then(r => setData(r.data))
       .catch(() => {})
       .finally(() => setLoading(false));

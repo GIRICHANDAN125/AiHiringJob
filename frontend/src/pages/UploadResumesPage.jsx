@@ -73,7 +73,7 @@ export default function UploadResumesPage() {
     files.forEach(({ file }) => formData.append('resumes', file));
 
     try {
-      const { data } = await api.post('/resumes/upload', formData, {
+      const { data } = await api.post('/api/resumes/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 

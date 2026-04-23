@@ -13,7 +13,7 @@ export default function ResumesPage() {
   const fetchResumes = async (searchTerm = '') => {
     setLoading(true);
     try {
-      const { data } = await api.get('/resumes', { params: { search: searchTerm, limit: 50 } });
+      const { data } = await api.get('/api/resumes', { params: { search: searchTerm, limit: 50 } });
       setResumes(data.resumes || []);
       setPagination(data.pagination || {});
     } catch { toast.error('Failed to load resumes'); }
@@ -29,7 +29,7 @@ export default function ResumesPage() {
   const handleDelete = async (id) => {
     if (!confirm('Delete this resume?')) return;
     try {
-      await api.delete(`/resumes/${id}`);
+      await api.delete(`/api/resumes/${id}`);
       setResumes(prev => prev.filter(r => r.id !== id));
       toast.success('Resume deleted');
     } catch { toast.error('Failed to delete'); }

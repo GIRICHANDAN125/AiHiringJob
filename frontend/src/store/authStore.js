@@ -23,7 +23,7 @@ const useAuthStore = create(
 
       fetchProfile: async () => {
         try {
-          const { data } = await api.get('/auth/me');
+          const { data } = await api.get('/api/auth/me');
           set({ user: data.user, isAuthenticated: true });
           return { success: true, user: data.user };
         } catch (err) {
@@ -51,7 +51,7 @@ const useAuthStore = create(
         set({ isProfileLoading: true });
 
         try {
-          const { data } = await api.put('/auth/update-profile', {
+          const { data } = await api.put('/api/auth/update-profile', {
             name: nextName,
             email: nextEmail,
           });
@@ -86,7 +86,7 @@ const useAuthStore = create(
         set({ notificationsLoading: true });
 
         try {
-          const { data } = await api.get('/notifications');
+          const { data } = await api.get('/api/notifications');
           set({ notifications: data.notifications || [] });
           return { success: true, notifications: data.notifications || [] };
         } catch (err) {
@@ -104,7 +104,7 @@ const useAuthStore = create(
 
       markNotificationRead: async (notificationId) => {
         try {
-          await api.patch(`/notifications/${notificationId}/read`);
+          await api.patch(`/api/notifications/${notificationId}/read`);
 
           set((state) => ({
             notifications: state.notifications.map((notification) => (
@@ -147,7 +147,7 @@ const useAuthStore = create(
         console.debug('[auth] login start', { email });
 
         try {
-          const { data } = await api.post('/auth/login', { email, password });
+          const { data } = await api.post('/api/auth/login', { email, password });
 
           console.debug('[auth] login response', data);
 
@@ -203,7 +203,7 @@ const useAuthStore = create(
         set({ isLoading: true });
 
         try {
-          const { data } = await api.post('/auth/register', {
+          const { data } = await api.post('/api/auth/register', {
             name,
             email,
             password,
@@ -228,7 +228,7 @@ const useAuthStore = create(
         set({ isLoading: true });
 
         try {
-          const { data } = await api.post('/auth/verify-otp', { email, otp });
+          const { data } = await api.post('/api/auth/verify-otp', { email, otp });
 
           const accessToken = data.accessToken || data.token;
 
@@ -241,7 +241,7 @@ const useAuthStore = create(
           api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
 
           // fetch user profile
-          const profileRes = await api.get('/auth/me');
+          const profileRes = await api.get('/api/auth/me');
 
           set({ user: profileRes.data.user });
 
@@ -262,7 +262,7 @@ const useAuthStore = create(
 
       logout: async () => {
         try {
-          await api.post('/auth/logout');
+          await api.post('/api/auth/logout');
         } catch {}
 
         set({
@@ -282,7 +282,7 @@ const useAuthStore = create(
         if (!refreshToken) return false;
 
         try {
-          const { data } = await api.post('/auth/refresh', { refreshToken });
+          const { data } = await api.post('/api/auth/refresh', { refreshToken });
 
           const accessToken = data.accessToken || data.token;
 

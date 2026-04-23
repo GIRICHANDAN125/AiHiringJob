@@ -15,7 +15,7 @@ export default function JobsPage() {
 
   const fetchJobs = () => {
     setLoading(true);
-    api.get('/jobs').then(r => setJobs(r.data.jobs || [])).catch(() => toast.error('Failed to load jobs')).finally(() => setLoading(false));
+    api.get('/api/jobs').then(r => setJobs(r.data.jobs || [])).catch(() => toast.error('Failed to load jobs')).finally(() => setLoading(false));
   };
 
   useEffect(() => { fetchJobs(); }, []);
@@ -23,7 +23,7 @@ export default function JobsPage() {
   const handleDelete = async (id, title) => {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
     try {
-      await api.delete(`/jobs/${id}`);
+      await api.delete(`/api/jobs/${id}`);
       toast.success('Job deleted');
       setJobs(prev => prev.filter(j => j.id !== id));
     } catch { toast.error('Failed to delete'); }

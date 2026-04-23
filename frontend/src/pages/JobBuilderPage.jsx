@@ -53,7 +53,7 @@ export default function JobBuilderPage() {
 
   useEffect(() => {
     if (isEdit) {
-      api.get(`/jobs/${jobId}`).then(r => {
+      api.get(`/api/jobs/${jobId}`).then(r => {
         const j = r.data.job;
         setForm({
           title: j.title || '',
@@ -89,7 +89,7 @@ export default function JobBuilderPage() {
     if (!form.title) { toast.error('Enter a job title first'); return; }
     setGenerating(true);
     try {
-      const { data } = await api.post('/jobs/generate-description', {
+      const { data } = await api.post('/api/jobs/generate-description', {
         title: form.title,
         requiredSkills: form.requiredSkills,
         niceToHaveSkills: form.niceToHaveSkills,
@@ -114,10 +114,10 @@ export default function JobBuilderPage() {
     setLoading(true);
     try {
       if (isEdit) {
-        await api.put(`/jobs/${jobId}`, form);
+        await api.put(`/api/jobs/${jobId}`, form);
         toast.success('Job updated!');
       } else {
-        const { data } = await api.post('/jobs', form);
+        const { data } = await api.post('/api/jobs', form);
         toast.success('Job created!');
         navigate(`/jobs/${data.job.id}/candidates`);
         return;

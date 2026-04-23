@@ -30,7 +30,7 @@ export default function CandidateDetailPage() {
 
   useEffect(() => {
     Promise.all([
-      api.get(`/candidates/${candidateId}`),
+      api.get(`/api/candidates/${candidateId}`),
     ]).then(([res]) => {
       setCandidate(res.data.candidate);
       if (jobId && res.data.candidate.applications) {
@@ -44,7 +44,7 @@ export default function CandidateDetailPage() {
     if (!jobId) { toast.error('No job context — navigate here from a job results page'); return; }
     setLoadingQuestions(true);
     try {
-      const { data } = await api.post(`/candidates/${candidateId}/interview-questions/${jobId}`);
+      const { data } = await api.post(`/api/candidates/${candidateId}/interview-questions/${jobId}`);
       setQuestions(data.questions);
       toast.success(`${data.questions.length} interview questions generated!`);
     } catch { toast.error('Failed to generate questions'); }
@@ -54,7 +54,7 @@ export default function CandidateDetailPage() {
   const updateStage = async (stage) => {
     if (!application) return;
     try {
-      await api.put(`/candidates/pipeline/${application.id}`, { stage });
+      await api.put(`/api/candidates/pipeline/${application.id}`, { stage });
       setApplication(prev => ({ ...prev, pipeline_stage: stage }));
       toast.success(`Moved to ${stage.replace('_', ' ')}`);
     } catch { toast.error('Failed to update stage'); }

@@ -65,7 +65,7 @@ export default function VerifyOTPPage() {
 
   const handleResend = async () => {
     try {
-      await api.post('/auth/resend-otp', { email });
+      await api.post('/api/auth/resend-otp', { email });
       toast.success('New OTP sent!');
       setResendCooldown(60);
     } catch (err) {

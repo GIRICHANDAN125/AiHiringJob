@@ -37,7 +37,7 @@ export default function CandidateResultsPage() {
   const [jobInfo, setJobInfo] = useState(null);
 
   useEffect(() => {
-    api.get(`/jobs/${jobId}`).then(r => setJobInfo(r.data.job)).catch(() => {});
+    api.get(`/api/jobs/${jobId}`).then(r => setJobInfo(r.data.job)).catch(() => {});
     // Auto-match on load
     runMatch();
   }, [jobId]);
@@ -45,7 +45,7 @@ export default function CandidateResultsPage() {
   const runMatch = async () => {
     setLoading(true);
     try {
-      const { data: result } = await api.post(`/candidates/match/${jobId}`);
+      const { data: result } = await api.post(`/api/candidates/match/${jobId}`);
       setData(result);
       setMatched(true);
     } catch (err) {
