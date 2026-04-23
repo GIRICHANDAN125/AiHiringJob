@@ -19,16 +19,15 @@ const app = express();
 
 // Security
 app.use(helmet());
-
-// ✅ FIXED CORS
 app.use(cors({
   origin: [
     "http://localhost:3000",
-    "https://ai-hiring-job.vercel.app"
+    "https://ai-hiring-job.vercel.app",
+    "https://ai-hiring-1jtd6sqdq-girichandan125s-projects.vercel.app"
   ],
-  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
 }));
-
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
