@@ -17,18 +17,19 @@ const logger = require('./utils/logger');
 
 const app = express();
 
-// Security
+// ================= SECURITY =================
 app.use(helmet());
+
+// 🔥 FINAL CORS FIX (SIMPLE + WORKING)
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://ai-hiring-job.vercel.app",
-    "https://ai-hiring-1jtd6sqdq-girichandan125s-projects.vercel.app"
-  ],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
+  origin: true, // allow all origins (fixes Vercel + local)
+  credentials: true,
 }));
-// Rate limiting
+
+// 🔥 VERY IMPORTANT: handle preflight requests
+app.options('*', cors());
+
+// ================= RATE LIMIT =================
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -36,14 +37,13 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Auth rate limit
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   message: { error: 'Too many auth attempts, please try again later.' },
 });
 
-// Middleware
+// ================= MIDDLEWARE =================
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -51,15 +51,15 @@ app.use(morgan('combined', {
   stream: { write: (msg) => logger.info(msg.trim()) }
 }));
 
-// Static
+// ================= STATIC =================
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Health check
+// ================= HEALTH =================
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString(), version: '1.0.0' });
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Routes
+// ================= ROUTES =================
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/resumes', resumeRoutes);
 app.use('/api/jobs', jobRoutes);
@@ -67,12 +67,12 @@ app.use('/api/candidates', candidateRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-// 404
+// ================= 404 =================
 app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-// Error handler
+// ================= ERROR =================
 app.use(errorHandler);
 
 module.exports = app;
