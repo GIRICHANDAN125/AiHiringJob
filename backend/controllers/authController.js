@@ -40,7 +40,7 @@ const setInMemoryOtp = (user) => {
   user.otp_expires_at = otpExpires.toISOString();
   user.is_verified = false;
   saveInMemoryUser(user);
-  console.log('Generated OTP');
+  console.log(`Generated OTP: ${otp}`);
   return { otp, otpExpires };
 };
 
@@ -84,7 +84,7 @@ const register = async (req, res) => {
       }
 
       const otp = generateOTP();
-      console.log('Generated OTP');
+      console.log(`Generated OTP: ${otp}`);
       const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
       const result = await query(
@@ -256,7 +256,7 @@ const login = async (req, res) => {
 
       if (!user.is_verified) {
         const otp = generateOTP();
-        console.log('Generated OTP');
+        console.log(`Generated OTP: ${otp}`);
         const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
         await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
         await emailService.sendOTP(normalizedEmail, user.name, otp);
@@ -376,7 +376,7 @@ const resendOTP = async (req, res) => {
       }
 
       const otp = generateOTP();
-      console.log('Generated OTP');
+      console.log(`Generated OTP: ${otp}`);
       const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
       await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
