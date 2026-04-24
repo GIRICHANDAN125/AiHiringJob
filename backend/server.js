@@ -6,15 +6,16 @@ const { connectDB } = require('./config/database');
 const logger = require('./utils/logger');
 
 const PORT = process.env.PORT || 5000;
+const hasDbConfig = Boolean(process.env.DATABASE_URL || process.env.DB_URL || process.env.DB_HOST);
 
 // DEBUG (optional)
 console.log("NODE_ENV:", process.env.NODE_ENV);
 console.log('ENV CHECK JWT_SECRET:', process.env.JWT_SECRET ? 'OK' : 'MISSING');
-console.log('ENV CHECK DB:', (process.env.DATABASE_URL || process.env.DB_URL || process.env.DB_HOST) ? 'OK' : 'MISSING');
+console.log('ENV CHECK DB:', hasDbConfig ? 'OK' : 'MISSING');
 
 const startServer = async () => {
   try {
-    if (process.env.DB_HOST) {
+    if (hasDbConfig) {
       try {
         await connectDB();
         console.log('DB connected');

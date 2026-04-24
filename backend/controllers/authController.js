@@ -7,6 +7,8 @@ const emailService = require('../services/emailService');
 const logger = require('../utils/logger');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const inMemoryUsers = new Map();
 
 const isDbConfigured = () => {
   return Boolean(
@@ -20,6 +22,26 @@ const logAuthEnvCheck = () => {
   console.log('ENV CHECK JWT_SECRET:', process.env.JWT_SECRET ? 'OK' : 'MISSING');
   console.log('ENV CHECK JWT_REFRESH_SECRET:', process.env.JWT_REFRESH_SECRET ? 'OK' : 'MISSING');
   console.log('ENV CHECK DB:', isDbConfigured() ? 'OK' : 'MISSING');
+};
+
+const normalizeEmail = (email) => (typeof email === 'string' ? email.trim().toLowerCase() : '');
+
+const saveInMemoryUser = (user) => {
+  const key = normalizeEmail(user.email);
+  if (key) inMemoryUsers.set(key, user);
+};
+
+const getInMemoryUser = (email) => inMemoryUsers.get(normalizeEmail(email));
+
+const setInMemoryOtp = (user) => {
+  const otp = generateOTP();
+  const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
+  user.otp_code = otp;
+  user.otp_expires_at = otpExpires.toISOString();
+  user.is_verified = false;
+  saveInMemoryUser(user);
+  console.log('Generated OTP');
+  return { otp, otpExpires };
 };
 
 const generateTokens = (userId) => {
@@ -43,8 +65,9 @@ const register = async (req, res) => {
     logAuthEnvCheck();
 
     const { name, email, password } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
 
-    if (!name || !email || !password) {
+    if (!name || !normalizedEmail || !password) {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
@@ -52,35 +75,60 @@ const register = async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    if (!isDbConfigured()) {
-      return res.status(503).json({ error: 'Database not configured' });
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    if (isDbConfigured()) {
+      const existing = await query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+      if (existing.rows.length) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+
+      const otp = generateOTP();
+      console.log('Generated OTP');
+      const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
+
+      const result = await query(
+        `INSERT INTO users (name, email, password_hash, otp_code, otp_expires_at)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email`,
+        [name, normalizedEmail, passwordHash, otp, otpExpires]
+      );
+
+      await emailService.sendOTP(normalizedEmail, name, otp);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Registration successful. Check your email for OTP.',
+        user: result.rows[0],
+      });
     }
 
-    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.rows.length) {
+    const existingInMemory = getInMemoryUser(normalizedEmail);
+    if (existingInMemory && existingInMemory.is_verified) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const otp = generateOTP();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    const memoryUser = existingInMemory || {
+      id: uuidv4(),
+      name,
+      email: normalizedEmail,
+      role: 'recruiter',
+      refresh_token: null,
+    };
 
-    const result = await query(
-      `INSERT INTO users (name, email, password_hash, otp_code, otp_expires_at)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email`,
-      [name, email, passwordHash, otp, otpExpires]
-    );
+    memoryUser.name = name;
+    memoryUser.password_hash = passwordHash;
 
-    try {
-      await emailService.sendOTP(email, name, otp);
-    } catch (err) {
-      logger.warn('Failed to send OTP email:', err.message);
-    }
+    const { otp } = setInMemoryOtp(memoryUser);
+    await emailService.sendOTP(normalizedEmail, name, otp);
 
     return res.status(201).json({
       success: true,
       message: 'Registration successful. Check your email for OTP.',
-      user: result.rows[0],
+      user: {
+        id: memoryUser.id,
+        name: memoryUser.name,
+        email: memoryUser.email,
+      },
     });
   } catch (error) {
     console.error('AUTH ERROR:', error);
@@ -91,40 +139,80 @@ const register = async (req, res) => {
 };
 
 const verifyOTP = async (req, res) => {
-  const { email, otp } = req.body;
+  const { email, otp } = req.body || {};
+  const normalizedEmail = normalizeEmail(email);
 
-  const result = await query(
-    'SELECT id, otp_code, otp_expires_at, is_verified FROM users WHERE email = $1',
-    [email]
-  );
-
-  if (!result.rows.length) {
-    throw new AppError('User not found', 404);
+  if (!normalizedEmail || !otp) {
+    return res.status(400).json({ error: 'Missing fields' });
   }
 
-  const user = result.rows[0];
+  if (isDbConfigured()) {
+    const result = await query(
+      'SELECT id, otp_code, otp_expires_at, is_verified FROM users WHERE email = $1',
+      [normalizedEmail]
+    );
 
-  if (user.is_verified) {
-    throw new AppError('Email already verified', 400);
+    if (!result.rows.length) {
+      throw new AppError('User not found', 404);
+    }
+
+    const user = result.rows[0];
+
+    if (user.is_verified) {
+      throw new AppError('Email already verified', 400);
+    }
+
+    if (!user.otp_code || user.otp_code !== otp) {
+      throw new AppError('Invalid OTP', 400);
+    }
+
+    if (new Date() > new Date(user.otp_expires_at)) {
+      throw new AppError('OTP has expired. Please request a new one.', 400);
+    }
+
+    await query(
+      'UPDATE users SET is_verified = TRUE, otp_code = NULL, otp_expires_at = NULL WHERE id = $1',
+      [user.id]
+    );
+
+    const { accessToken, refreshToken } = generateTokens(user.id);
+    await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+
+    return res.json({
+      success: true,
+      message: 'Email verified successfully',
+      accessToken,
+      refreshToken,
+    });
   }
 
-  if (!user.otp_code || user.otp_code !== otp) {
-    throw new AppError('Invalid OTP', 400);
+  const memoryUser = getInMemoryUser(normalizedEmail);
+  if (!memoryUser) {
+    return res.status(404).json({ error: 'User not found' });
   }
 
-  if (new Date() > new Date(user.otp_expires_at)) {
-    throw new AppError('OTP has expired. Please request a new one.', 400);
+  if (memoryUser.is_verified) {
+    return res.status(400).json({ error: 'Email already verified' });
   }
 
-  await query(
-    'UPDATE users SET is_verified = TRUE, otp_code = NULL, otp_expires_at = NULL WHERE id = $1',
-    [user.id]
-  );
+  if (!memoryUser.otp_code || memoryUser.otp_code !== otp) {
+    return res.status(400).json({ error: 'Invalid OTP' });
+  }
 
-  const { accessToken, refreshToken } = generateTokens(user.id);
-  await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+  if (new Date() > new Date(memoryUser.otp_expires_at)) {
+    return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
+  }
 
-  res.json({
+  memoryUser.is_verified = true;
+  memoryUser.otp_code = null;
+  memoryUser.otp_expires_at = null;
+  saveInMemoryUser(memoryUser);
+
+  const { accessToken, refreshToken } = generateTokens(memoryUser.id);
+  memoryUser.refresh_token = refreshToken;
+  saveInMemoryUser(memoryUser);
+
+  return res.json({
     success: true,
     message: 'Email verified successfully',
     accessToken,
@@ -139,55 +227,87 @@ const login = async (req, res) => {
     logAuthEnvCheck();
 
     const { email, password } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
 
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ error: 'Missing fields' });
-    }
-
-    if (!isDbConfigured()) {
-      return res.status(503).json({ error: 'Database not configured' });
     }
 
     if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
       return res.status(500).json({ error: 'Server auth environment is not configured' });
     }
 
-    const result = await query(
-      'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = $1',
-      [email]
-    );
+    if (isDbConfigured()) {
+      const result = await query(
+        'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = $1',
+        [normalizedEmail]
+      );
 
-    if (!result.rows.length) {
+      if (!result.rows.length) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      const user = result.rows[0];
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+
+      if (!user.is_verified) {
+        const otp = generateOTP();
+        console.log('Generated OTP');
+        const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
+        await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+        await emailService.sendOTP(normalizedEmail, user.name, otp);
+        return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+      }
+
+      const { accessToken, refreshToken } = generateTokens(user.id);
+      await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+
+      return res.json({
+        success: true,
+        accessToken,
+        refreshToken,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      });
+    }
+
+    const memoryUser = getInMemoryUser(normalizedEmail);
+    if (!memoryUser) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
-
+    const isMatch = await bcrypt.compare(password, memoryUser.password_hash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    if (!user.is_verified) {
-      const otp = generateOTP();
-      const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-      await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
-      await emailService.sendOTP(email, user.name, otp);
+    if (!memoryUser.is_verified) {
+      const { otp } = setInMemoryOtp(memoryUser);
+      await emailService.sendOTP(normalizedEmail, memoryUser.name, otp);
       return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
     }
 
-    const { accessToken, refreshToken } = generateTokens(user.id);
-    await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+    const { accessToken, refreshToken } = generateTokens(memoryUser.id);
+    memoryUser.refresh_token = refreshToken;
+    saveInMemoryUser(memoryUser);
 
     return res.json({
       success: true,
       accessToken,
       refreshToken,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
+        id: memoryUser.id,
+        name: memoryUser.name,
+        email: memoryUser.email,
+        role: memoryUser.role,
       },
     });
   } catch (error) {
@@ -242,25 +362,40 @@ const resendOTP = async (req, res) => {
       return res.status(400).json({ error: 'Missing fields' });
     }
 
-    if (!isDbConfigured()) {
-      return res.status(503).json({ error: 'Database not configured' });
+    const normalizedEmail = normalizeEmail(email);
+
+    if (isDbConfigured()) {
+      const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [normalizedEmail]);
+      if (!result.rows.length) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const user = result.rows[0];
+      if (user.is_verified) {
+        return res.status(400).json({ error: 'Email already verified' });
+      }
+
+      const otp = generateOTP();
+      console.log('Generated OTP');
+      const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
+
+      await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+      await emailService.sendOTP(normalizedEmail, user.name, otp);
+
+      return res.json({ success: true, message: 'OTP resent successfully' });
     }
 
-    const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [email]);
-    if (!result.rows.length) {
+    const memoryUser = getInMemoryUser(normalizedEmail);
+    if (!memoryUser) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = result.rows[0];
-    if (user.is_verified) {
+    if (memoryUser.is_verified) {
       return res.status(400).json({ error: 'Email already verified' });
     }
 
-    const otp = generateOTP();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-    await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
-    await emailService.sendOTP(email, user.name, otp);
+    const { otp } = setInMemoryOtp(memoryUser);
+    await emailService.sendOTP(normalizedEmail, memoryUser.name, otp);
 
     return res.json({ success: true, message: 'OTP resent successfully' });
   } catch (error) {

@@ -5,9 +5,6 @@ let transporter;
 
 const getTransporter = () => {
   if (!transporter) {
-    console.log('Sending email');
-    console.log('SMTP USER:', process.env.SMTP_USER);
-    console.log('SMTP PASS:', process.env.SMTP_PASS ? 'SET' : 'MISSING');
     transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -20,6 +17,10 @@ const getTransporter = () => {
 };
 
 const sendOTP = async (email, name, otp) => {
+  console.log('SMTP USER:', process.env.SMTP_USER || 'MISSING');
+  console.log('SMTP PASS:', process.env.SMTP_PASS ? 'SET' : 'MISSING');
+  console.log('Sending email');
+
   const html = `
   <!DOCTYPE html>
   <html>
