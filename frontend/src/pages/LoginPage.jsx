@@ -142,12 +142,6 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Demo credentials */}
-          <div className="mt-6 p-4 rounded-xl bg-dark-800 border border-dark-700">
-            <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wider">Demo Credentials</p>
-            <p className="text-sm text-slate-400">Email: <span className="text-slate-200 font-mono">demo@aiplatform.com</span></p>
-            <p className="text-sm text-slate-400">Password: <span className="text-slate-200 font-mono">Demo@1234</span></p>
-          </div>
         </div>
       </div>
     </div>

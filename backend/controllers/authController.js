@@ -53,11 +53,7 @@ const register = async (req, res) => {
     }
 
     if (!isDbConfigured()) {
-      return res.status(201).json({
-        success: true,
-        message: 'Register working (mock)',
-        user: { name, email },
-      });
+      return res.status(503).json({ error: 'Database not configured' });
     }
 
     const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
@@ -149,10 +145,7 @@ const login = async (req, res) => {
     }
 
     if (!isDbConfigured()) {
-      return res.json({
-        message: 'Login working (mock)',
-        user: { email },
-      });
+      return res.status(503).json({ error: 'Database not configured' });
     }
 
     if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
@@ -179,11 +172,7 @@ const login = async (req, res) => {
       const otp = generateOTP();
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
       await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
-      try {
-        await emailService.sendOTP(email, user.name, otp);
-      } catch (e) {
-        logger.warn('Failed to send OTP email:', e.message);
-      }
+      await emailService.sendOTP(email, user.name, otp);
       return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
     }
 
@@ -243,6 +232,9 @@ const logout = async (req, res) => {
 
 const resendOTP = async (req, res) => {
   const { email } = req.body;
+  if (!isDbConfigured()) {
+    return res.status(503).json({ error: 'Database not configured' });
+  }
   const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [email]);
   if (!result.rows.length) throw new AppError('User not found', 404);
   const user = result.rows[0];

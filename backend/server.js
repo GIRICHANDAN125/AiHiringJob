@@ -14,24 +14,24 @@ console.log('ENV CHECK DB:', (process.env.DATABASE_URL || process.env.DB_URL || 
 
 const startServer = async () => {
   try {
-    if (process.env.DATABASE_URL || process.env.DB_URL || process.env.DB_HOST) {
+    if (process.env.DB_HOST) {
       try {
         await connectDB();
-        logger.info('✅ Database connected');
+        console.log('DB connected');
       } catch (dbError) {
-        logger.error('⚠️ Database connection failed:', dbError.message);
+        console.error(dbError);
       }
     } else {
-      logger.warn('⚠️ No DB environment variables found; auth mock responses will be used for login/register');
+      console.log('No DB, but continuing...');
     }
 
     app.listen(PORT, () => {
-      logger.info(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
+      console.log('Server running');
     });
 
   } catch (error) {
-    console.error("FULL ERROR:", error);
-    logger.error('❌ Failed to start server:', error.message);
+    console.error(error);
+    process.exit(1);
   }
 };
 

@@ -5,13 +5,14 @@ let transporter;
 
 const getTransporter = () => {
   if (!transporter) {
+    console.log('Sending OTP email...');
+    console.log('SMTP USER:', process.env.SMTP_USER);
+    console.log('SMTP PASS:', process.env.SMTP_PASS ? 'SET' : 'MISSING');
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT) || 587,
-      secure: false,
+      service: 'gmail',
       auth: {
         user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        pass: process.env.SMTP_PASS && process.env.SMTP_PASS.replace(/\s+/g, ''),
       },
     });
   }
@@ -53,7 +54,7 @@ const sendOTP = async (email, name, otp) => {
     logger.info(`OTP email sent to ${email}`);
   } catch (err) {
     logger.error('Failed to send OTP email:', err.message);
-    // Don't throw - email is best-effort in dev
+    // Keep dev readable, but do not hide production failures
     if (process.env.NODE_ENV === 'development') {
       logger.info(`[DEV] OTP for ${email}: ${otp}`);
     } else {
