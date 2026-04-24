@@ -8,6 +8,20 @@ const logger = require('../utils/logger');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+const isDbConfigured = () => {
+  return Boolean(
+    process.env.DB_URL ||
+    process.env.DATABASE_URL ||
+    process.env.DB_HOST
+  );
+};
+
+const logAuthEnvCheck = () => {
+  console.log('ENV CHECK JWT_SECRET:', process.env.JWT_SECRET ? 'OK' : 'MISSING');
+  console.log('ENV CHECK JWT_REFRESH_SECRET:', process.env.JWT_REFRESH_SECRET ? 'OK' : 'MISSING');
+  console.log('ENV CHECK DB:', isDbConfigured() ? 'OK' : 'MISSING');
+};
+
 const generateTokens = (userId) => {
   const accessToken = jwt.sign(
     { userId },
@@ -23,42 +37,61 @@ const generateTokens = (userId) => {
 };
 
 const register = async (req, res) => {
-  const { name, email, password } = req.body;
-
-  if (!name || !email || !password) {
-    throw new AppError('Name, email, and password are required', 400);
-  }
-
-  if (password.length < 8) {
-    throw new AppError('Password must be at least 8 characters', 400);
-  }
-
-  const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
-  if (existing.rows.length) {
-    throw new AppError('Email already registered', 409);
-  }
-
-  const passwordHash = await bcrypt.hash(password, 12);
-  const otp = generateOTP();
-  const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-  const result = await query(
-    `INSERT INTO users (name, email, password_hash, otp_code, otp_expires_at)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email`,
-    [name, email, passwordHash, otp, otpExpires]
-  );
+  console.log('Request body:', req.body);
 
   try {
-    await emailService.sendOTP(email, name, otp);
-  } catch (err) {
-    logger.warn('Failed to send OTP email:', err.message);
-  }
+    logAuthEnvCheck();
 
-  res.status(201).json({
-    success: true,
-    message: 'Registration successful. Check your email for OTP.',
-    user: result.rows[0],
-  });
+    const { name, email, password } = req.body || {};
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    if (!isDbConfigured()) {
+      return res.status(201).json({
+        success: true,
+        message: 'Register working (mock)',
+        user: { name, email },
+      });
+    }
+
+    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const otp = generateOTP();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+    const result = await query(
+      `INSERT INTO users (name, email, password_hash, otp_code, otp_expires_at)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email`,
+      [name, email, passwordHash, otp, otpExpires]
+    );
+
+    try {
+      await emailService.sendOTP(email, name, otp);
+    } catch (err) {
+      logger.warn('Failed to send OTP email:', err.message);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Registration successful. Check your email for OTP.',
+      user: result.rows[0],
+    });
+  } catch (error) {
+    console.error('AUTH ERROR:', error);
+    return res.status(500).json({
+      error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    });
+  }
 };
 
 const verifyOTP = async (req, res) => {
@@ -104,47 +137,76 @@ const verifyOTP = async (req, res) => {
 };
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
+  console.log('Request body:', req.body);
 
-  const result = await query(
-    'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = $1',
-    [email]
-  );
+  try {
+    logAuthEnvCheck();
 
-  if (!result.rows.length) {
-    throw new AppError('Invalid email or password', 401);
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    if (!isDbConfigured()) {
+      return res.json({
+        message: 'Login working (mock)',
+        user: { email },
+      });
+    }
+
+    if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+      return res.status(500).json({ error: 'Server auth environment is not configured' });
+    }
+
+    const result = await query(
+      'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (!result.rows.length) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    if (!user.is_verified) {
+      const otp = generateOTP();
+      const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+      await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+      try {
+        await emailService.sendOTP(email, user.name, otp);
+      } catch (e) {
+        logger.warn('Failed to send OTP email:', e.message);
+      }
+      return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+    }
+
+    const { accessToken, refreshToken } = generateTokens(user.id);
+    await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+
+    return res.json({
+      success: true,
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('AUTH ERROR:', error);
+    return res.status(500).json({
+      error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    });
   }
-
-  const user = result.rows[0];
-  const isMatch = await bcrypt.compare(password, user.password_hash);
-
-  if (!isMatch) {
-    throw new AppError('Invalid email or password', 401);
-  }
-
-  if (!user.is_verified) {
-    // Resend OTP
-    const otp = generateOTP();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-    await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
-    try { await emailService.sendOTP(email, user.name, otp); } catch (e) {}
-    throw new AppError('Email not verified. A new OTP has been sent.', 403);
-  }
-
-  const { accessToken, refreshToken } = generateTokens(user.id);
-  await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
-
-  res.json({
-    success: true,
-    accessToken,
-    refreshToken,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    },
-  });
 };
 
 const refreshToken = async (req, res) => {

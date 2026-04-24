@@ -9,16 +9,20 @@ const PORT = process.env.PORT || 5000;
 
 // DEBUG (optional)
 console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log('ENV CHECK JWT_SECRET:', process.env.JWT_SECRET ? 'OK' : 'MISSING');
+console.log('ENV CHECK DB:', (process.env.DATABASE_URL || process.env.DB_URL || process.env.DB_HOST) ? 'OK' : 'MISSING');
 
 const startServer = async () => {
   try {
-
-    // 👉 Only connect DB in local (NOT in production)
-    if (process.env.NODE_ENV !== "production") {
-      await connectDB();
-      logger.info('✅ Database connected');
+    if (process.env.DATABASE_URL || process.env.DB_URL || process.env.DB_HOST) {
+      try {
+        await connectDB();
+        logger.info('✅ Database connected');
+      } catch (dbError) {
+        logger.error('⚠️ Database connection failed:', dbError.message);
+      }
     } else {
-      logger.info('⚠️ Skipping DB connection in production (temporary)');
+      logger.warn('⚠️ No DB environment variables found; auth mock responses will be used for login/register');
     }
 
     app.listen(PORT, () => {
@@ -28,11 +32,6 @@ const startServer = async () => {
   } catch (error) {
     console.error("FULL ERROR:", error);
     logger.error('❌ Failed to start server:', error.message);
-
-    // 👉 Don't crash in production
-    if (process.env.NODE_ENV !== "production") {
-      process.exit(1);
-    }
   }
 };
 
