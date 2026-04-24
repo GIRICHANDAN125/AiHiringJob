@@ -5,7 +5,7 @@ let transporter;
 
 const getTransporter = () => {
   if (!transporter) {
-    console.log('Sending OTP email...');
+    console.log('Sending email');
     console.log('SMTP USER:', process.env.SMTP_USER);
     console.log('SMTP PASS:', process.env.SMTP_PASS ? 'SET' : 'MISSING');
     transporter = nodemailer.createTransport({
@@ -51,6 +51,7 @@ const sendOTP = async (email, name, otp) => {
       subject: `${otp} - Your Verification Code`,
       html,
     });
+    console.log('Email sent successfully');
     logger.info(`OTP email sent to ${email}`);
   } catch (err) {
     logger.error('Failed to send OTP email:', err.message);

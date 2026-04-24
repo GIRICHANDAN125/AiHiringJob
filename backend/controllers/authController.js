@@ -231,21 +231,44 @@ const logout = async (req, res) => {
 };
 
 const resendOTP = async (req, res) => {
-  const { email } = req.body;
-  if (!isDbConfigured()) {
-    return res.status(503).json({ error: 'Database not configured' });
+  console.log('Request body:', req.body);
+
+  try {
+    logAuthEnvCheck();
+
+    const { email } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    if (!isDbConfigured()) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [email]);
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = result.rows[0];
+    if (user.is_verified) {
+      return res.status(400).json({ error: 'Email already verified' });
+    }
+
+    const otp = generateOTP();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+    await emailService.sendOTP(email, user.name, otp);
+
+    return res.json({ success: true, message: 'OTP resent successfully' });
+  } catch (error) {
+    console.error('AUTH ERROR:', error);
+    return res.status(500).json({
+      error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    });
   }
-  const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [email]);
-  if (!result.rows.length) throw new AppError('User not found', 404);
-  const user = result.rows[0];
-  if (user.is_verified) throw new AppError('Email already verified', 400);
-
-  const otp = generateOTP();
-  const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-  await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
-  await emailService.sendOTP(email, user.name, otp);
-
-  res.json({ success: true, message: 'OTP resent successfully' });
 };
 
 const getProfile = async (req, res) => {
