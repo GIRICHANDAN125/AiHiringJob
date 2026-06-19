@@ -1,18 +1,17 @@
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: ai_hiring_postgres
+  mysql:
+    image: mysql:8.0
+    container_name: ai_hiring_mysql
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ai_hiring_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
+      MYSQL_DATABASE: aihiringjob
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_hiring_db"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -29,11 +28,11 @@ services:
       NODE_ENV: production
       PORT: 5000
       FRONTEND_URL: http://localhost:3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ai_hiring_db
-      DB_USER: postgres
-      DB_PASSWORD: postgres123
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: aihiringjob
+      DB_USER: root
+      DB_PASSWORD: ""
       JWT_SECRET: your_super_secret_jwt_key_change_this
       JWT_REFRESH_SECRET: your_refresh_secret_key_change_this
       JWT_EXPIRES_IN: 15m
@@ -46,7 +45,7 @@ services:
       - uploads_data:/app/uploads
       - logs_data:/app/logs
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
@@ -76,6 +75,6 @@ services:
       start_period: 10s
 
 volumes:
-  postgres_data:
+  mysql_data:
   uploads_data:
   logs_data:

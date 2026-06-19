@@ -1,21 +1,16 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { query } = require('../config/database');
+const { query, hasDatabaseConfig, isDatabaseConnected } = require('../config/database');
 const { AppError } = require('../middleware/errorHandler');
 const emailService = require('../services/emailService');
-const logger = require('../utils/logger');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
 const inMemoryUsers = new Map();
 
 const isDbConfigured = () => {
-  return Boolean(
-    process.env.DB_URL ||
-    process.env.DATABASE_URL ||
-    process.env.DB_HOST
-  );
+  return hasDatabaseConfig && isDatabaseConnected();
 };
 
 const logAuthEnvCheck = () => {
@@ -78,19 +73,20 @@ const register = async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
 
     if (isDbConfigured()) {
-      const existing = await query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+      const existing = await query('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
       if (existing.rows.length) {
         return res.status(409).json({ error: 'Email already registered' });
       }
 
+      const userId = uuidv4();
       const otp = generateOTP();
       console.log(`Generated OTP: ${otp}`);
       const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
-      const result = await query(
-        `INSERT INTO users (name, email, password_hash, otp_code, otp_expires_at)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email`,
-        [name, normalizedEmail, passwordHash, otp, otpExpires]
+      await query(
+        `INSERT INTO users (id, name, email, password_hash, otp_code, otp_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, name, normalizedEmail, passwordHash, otp, otpExpires]
       );
 
       await emailService.sendOTP(normalizedEmail, name, otp);
@@ -98,7 +94,7 @@ const register = async (req, res) => {
       return res.status(201).json({
         success: true,
         message: 'Registration successful. Check your email for OTP.',
-        user: result.rows[0],
+        user: { id: userId, name, email: normalizedEmail },
       });
     }
 
@@ -148,7 +144,7 @@ const verifyOTP = async (req, res) => {
 
   if (isDbConfigured()) {
     const result = await query(
-      'SELECT id, otp_code, otp_expires_at, is_verified FROM users WHERE email = $1',
+      'SELECT id, otp_code, otp_expires_at, is_verified FROM users WHERE email = ?',
       [normalizedEmail]
     );
 
@@ -171,12 +167,12 @@ const verifyOTP = async (req, res) => {
     }
 
     await query(
-      'UPDATE users SET is_verified = TRUE, otp_code = NULL, otp_expires_at = NULL WHERE id = $1',
+      'UPDATE users SET is_verified = 1, otp_code = NULL, otp_expires_at = NULL WHERE id = ?',
       [user.id]
     );
 
     const { accessToken, refreshToken } = generateTokens(user.id);
-    await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+    await query('UPDATE users SET refresh_token = ? WHERE id = ?', [refreshToken, user.id]);
 
     return res.json({
       success: true,
@@ -239,7 +235,7 @@ const login = async (req, res) => {
 
     if (isDbConfigured()) {
       const result = await query(
-        'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = $1',
+        'SELECT id, name, email, password_hash, role, is_verified FROM users WHERE email = ?',
         [normalizedEmail]
       );
 
@@ -258,13 +254,13 @@ const login = async (req, res) => {
         const otp = generateOTP();
         console.log(`Generated OTP: ${otp}`);
         const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
-        await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+        await query('UPDATE users SET otp_code = ?, otp_expires_at = ? WHERE id = ?', [otp, otpExpires, user.id]);
         await emailService.sendOTP(normalizedEmail, user.name, otp);
         return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
       }
 
       const { accessToken, refreshToken } = generateTokens(user.id);
-      await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
+      await query('UPDATE users SET refresh_token = ? WHERE id = ?', [refreshToken, user.id]);
 
       return res.json({
         success: true,
@@ -331,7 +327,7 @@ const refreshToken = async (req, res) => {
   }
 
   const result = await query(
-    'SELECT id, refresh_token FROM users WHERE id = $1',
+    'SELECT id, refresh_token FROM users WHERE id = ?',
     [decoded.userId]
   );
 
@@ -340,13 +336,13 @@ const refreshToken = async (req, res) => {
   }
 
   const { accessToken, refreshToken: newRefreshToken } = generateTokens(decoded.userId);
-  await query('UPDATE users SET refresh_token = $1 WHERE id = $2', [newRefreshToken, decoded.userId]);
+  await query('UPDATE users SET refresh_token = ? WHERE id = ?', [newRefreshToken, decoded.userId]);
 
   res.json({ success: true, accessToken, refreshToken: newRefreshToken });
 };
 
 const logout = async (req, res) => {
-  await query('UPDATE users SET refresh_token = NULL WHERE id = $1', [req.user.id]);
+  await query('UPDATE users SET refresh_token = NULL WHERE id = ?', [req.user.id]);
   res.json({ success: true, message: 'Logged out successfully' });
 };
 
@@ -365,7 +361,7 @@ const resendOTP = async (req, res) => {
     const normalizedEmail = normalizeEmail(email);
 
     if (isDbConfigured()) {
-      const result = await query('SELECT id, name, is_verified FROM users WHERE email = $1', [normalizedEmail]);
+      const result = await query('SELECT id, name, is_verified FROM users WHERE email = ?', [normalizedEmail]);
       if (!result.rows.length) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -379,7 +375,7 @@ const resendOTP = async (req, res) => {
       console.log(`Generated OTP: ${otp}`);
       const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
-      await query('UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE id = $3', [otp, otpExpires, user.id]);
+      await query('UPDATE users SET otp_code = ?, otp_expires_at = ? WHERE id = ?', [otp, otpExpires, user.id]);
       await emailService.sendOTP(normalizedEmail, user.name, otp);
 
       return res.json({ success: true, message: 'OTP resent successfully' });
@@ -411,43 +407,59 @@ const getProfile = async (req, res) => {
 };
 
 const updateProfile = async (req, res) => {
-  const { name, email } = req.body;
+  try {
+    const { name, email } = req.body;
 
-  const nextName = typeof name === 'string' ? name.trim() : '';
-  const nextEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const nextName = typeof name === 'string' ? name.trim() : '';
+    const nextEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-  if (!nextName || !nextEmail) {
-    throw new AppError('Name and email are required', 400);
+    if (!nextName || !nextEmail) {
+      return res.status(400).json({ success: false, message: 'Name and email are required' });
+    }
+
+    // Check if the new email is already used by a DIFFERENT user
+    const duplicate = await query(
+      'SELECT id FROM users WHERE LOWER(email) = ? AND id != ?',
+      [nextEmail, req.user.id]
+    );
+
+    if (duplicate.rows.length) {
+      return res.status(409).json({ success: false, message: 'This email address is already in use by another account' });
+    }
+
+    await query(
+      `UPDATE users SET name = ?, email = ?, updated_at = NOW() WHERE id = ?`,
+      [nextName, nextEmail, req.user.id]
+    );
+
+    const updated = await query(
+      'SELECT id, name, email, role, is_verified FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    // Insert notification — must provide id (CHAR(36) PRIMARY KEY)
+    try {
+      await query(
+        `INSERT INTO notifications (id, user_id, message) VALUES (?, ?, ?)`,
+        [uuidv4(), req.user.id, 'Your profile information was updated successfully.']
+      );
+    } catch (notifErr) {
+      // Non-fatal: log but don't fail the whole request
+      console.error('Failed to insert profile-update notification:', notifErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: updated.rows[0],
+    });
+  } catch (error) {
+    console.error('Update Profile Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    });
   }
-
-  const duplicate = await query(
-    'SELECT id FROM users WHERE email = $1 AND id != $2',
-    [nextEmail, req.user.id]
-  );
-
-  if (duplicate.rows.length) {
-    throw new AppError('Email is already in use', 409);
-  }
-
-  const result = await query(
-    `UPDATE users
-     SET name = $1, email = $2, updated_at = NOW()
-     WHERE id = $3
-     RETURNING id, name, email, role, is_verified`,
-    [nextName, nextEmail, req.user.id]
-  );
-
-  await query(
-    `INSERT INTO notifications (user_id, message)
-     VALUES ($1, $2)`,
-    [req.user.id, 'Your profile information was updated successfully.']
-  );
-
-  res.json({
-    success: true,
-    message: 'Profile updated successfully',
-    user: result.rows[0],
-  });
 };
 
 module.exports = {

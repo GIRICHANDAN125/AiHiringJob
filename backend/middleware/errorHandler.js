@@ -4,14 +4,20 @@ const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
 
-  // Postgres unique constraint
-  if (err.code === '23505') {
+  // Database unique constraint
+  if (err.code === '23505' || err.code === 'ER_DUP_ENTRY') {
     statusCode = 409;
     message = 'Resource already exists';
   }
 
-  // Postgres foreign key
-  if (err.code === '23503') {
+  // Database foreign key constraint
+  if (
+    err.code === '23503' ||
+    err.code === 'ER_NO_REFERENCED_ROW_2' ||
+    err.code === 'ER_NO_REFERENCED_ROW' ||
+    err.code === 'ER_ROW_IS_REFERENCED_2' ||
+    err.code === 'ER_ROW_IS_REFERENCED'
+  ) {
     statusCode = 400;
     message = 'Referenced resource not found';
   }

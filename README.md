@@ -6,7 +6,7 @@ A full-stack production-grade SaaS for AI-powered resume analysis, candidate mat
 
 ### Docker Compose (Recommended)
 ```bash
-cp .env.example .env
+cp backend/.env.example backend/.env
 docker-compose -f docker/docker-compose.yml up --build
 ```
 - Frontend: http://localhost:3000

@@ -28,8 +28,20 @@ const calculateMatch = (candidate, job) => {
   );
 
   // 4. Education match (10% weight)
+  let educationArray = candidate.education || [];
+  if (typeof educationArray === 'string') {
+    try {
+      educationArray = JSON.parse(educationArray);
+    } catch {
+      educationArray = [];
+    }
+  }
+  if (!Array.isArray(educationArray)) {
+    educationArray = [];
+  }
+
   const eduScore = calculateEducationScore(
-    candidate.education || [],
+    educationArray,
     job.education_level
   );
 
@@ -58,7 +70,8 @@ const normalizeSkills = (skills) => {
   if (typeof skills === 'string') {
     try { skills = JSON.parse(skills); } catch { return []; }
   }
-  return skills.map(s => s.toLowerCase().trim());
+  if (!Array.isArray(skills)) return [];
+  return skills.map(s => s ? String(s).toLowerCase().trim() : '');
 };
 
 const compareSkills = (candidateSkills, jobSkills) => {
@@ -121,6 +134,16 @@ const calculateExperienceScore = (candidateYears, minYears, maxYears) => {
 
 const calculateEducationScore = (education, requiredLevel) => {
   if (!requiredLevel) return 10;
+
+  // Guard: ensure education is always an array
+  if (!Array.isArray(education)) {
+    if (typeof education === 'string') {
+      try { education = JSON.parse(education); } catch { education = []; }
+    } else {
+      education = [];
+    }
+    if (!Array.isArray(education)) education = [];
+  }
 
   const levelMap = {
     'high school': 1,

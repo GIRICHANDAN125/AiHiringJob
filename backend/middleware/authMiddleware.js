@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { query } = require('../config/database');
+const { query, isDatabaseConnected } = require('../config/database');
 const { AppError } = require('./errorHandler');
 
 const authenticate = async (req, res, next) => {
@@ -12,8 +12,13 @@ const authenticate = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    if (!isDatabaseConnected()) {
+      req.user = { id: decoded.userId };
+      return next();
+    }
+
     const result = await query(
-      'SELECT id, name, email, role, is_verified FROM users WHERE id = $1',
+      'SELECT id, name, email, role, is_verified FROM users WHERE id = ?',
       [decoded.userId]
     );
 

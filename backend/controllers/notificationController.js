@@ -5,7 +5,7 @@ const getNotifications = async (req, res) => {
   const result = await query(
     `SELECT id, user_id, message, is_read, created_at
      FROM notifications
-     WHERE user_id = $1
+     WHERE user_id = ?
      ORDER BY created_at DESC
      LIMIT 50`,
     [req.user.id]
@@ -26,19 +26,25 @@ const markNotificationRead = async (req, res) => {
   const result = await query(
     `UPDATE notifications
      SET is_read = TRUE
-     WHERE id = $1 AND user_id = $2
-     RETURNING id, user_id, message, is_read, created_at`,
+     WHERE id = ? AND user_id = ?`,
     [id, req.user.id]
   );
 
-  if (!result.rows.length) {
+  if (!result.affectedRows) {
     throw new AppError('Notification not found', 404);
   }
+
+  const updated = await query(
+    `SELECT id, user_id, message, is_read, created_at
+     FROM notifications
+     WHERE id = ? AND user_id = ?`,
+    [id, req.user.id]
+  );
 
   res.json({
     success: true,
     message: 'Notification marked as read',
-    notification: result.rows[0],
+    notification: updated.rows[0],
   });
 };
 

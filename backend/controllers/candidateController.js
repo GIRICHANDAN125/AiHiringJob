@@ -2,13 +2,50 @@ const { query } = require('../config/database');
 const { AppError } = require('../middleware/errorHandler');
 const matchingService = require('../services/matchingService');
 const interviewService = require('../services/interviewService');
+const { v4: uuidv4 } = require('uuid');
+
+const parseCandidate = (candidate) => {
+  if (!candidate) return candidate;
+  const c = { ...candidate };
+  try {
+    c.skills = typeof c.skills === 'string' ? JSON.parse(c.skills) : (c.skills || []);
+  } catch (e) {
+    c.skills = [];
+  }
+  try {
+    c.education = typeof c.education === 'string' ? JSON.parse(c.education) : (c.education || []);
+  } catch (e) {
+    c.education = [];
+  }
+  try {
+    c.skill_gap = typeof c.skill_gap === 'string' ? JSON.parse(c.skill_gap) : (c.skill_gap || []);
+  } catch (e) {
+    c.skill_gap = [];
+  }
+  try {
+    c.matched_skills = typeof c.matched_skills === 'string' ? JSON.parse(c.matched_skills) : (c.matched_skills || []);
+  } catch (e) {
+    c.matched_skills = [];
+  }
+  try {
+    c.score_breakdown = typeof c.score_breakdown === 'string' ? JSON.parse(c.score_breakdown) : (c.score_breakdown || {});
+  } catch (e) {
+    c.score_breakdown = {};
+  }
+  try {
+    c.interview_questions = typeof c.interview_questions === 'string' ? JSON.parse(c.interview_questions) : (c.interview_questions || []);
+  } catch (e) {
+    c.interview_questions = [];
+  }
+  return c;
+};
 
 const matchCandidates = async (req, res) => {
   const { jobId } = req.params;
 
   // Get job
   const jobResult = await query(
-    'SELECT * FROM jobs WHERE id = $1 AND user_id = $2',
+    'SELECT * FROM jobs WHERE id = ? AND user_id = ?',
     [jobId, req.user.id]
   );
   if (!jobResult.rows.length) throw new AppError('Job not found', 404);
@@ -18,13 +55,22 @@ const matchCandidates = async (req, res) => {
   const candidatesResult = await query(
     `SELECT c.*, r.id as resume_id, r.quality_score
      FROM candidates c
-     LEFT JOIN resumes r ON r.candidate_id = c.id AND r.user_id = $1
-     WHERE c.user_id = $1
+     LEFT JOIN resumes r ON r.candidate_id = c.id AND r.user_id = ?
+     WHERE c.user_id = ?
      ORDER BY r.created_at DESC`,
-    [req.user.id]
+    [req.user.id, req.user.id]
   );
 
-  const candidates = candidatesResult.rows;
+  // De-duplicate candidates so we only process each candidate once (with their latest resume)
+  const seenCandidates = new Set();
+  const candidates = [];
+  for (const row of candidatesResult.rows) {
+    if (!seenCandidates.has(row.id)) {
+      seenCandidates.add(row.id);
+      candidates.push(row);
+    }
+  }
+
   const matchResults = [];
 
   for (const candidate of candidates) {
@@ -32,11 +78,11 @@ const matchCandidates = async (req, res) => {
 
     // Upsert application
     await query(
-      `INSERT INTO applications (job_id, candidate_id, resume_id, match_score, skill_gap, matched_skills, score_breakdown)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (job_id, candidate_id)
-       DO UPDATE SET match_score = $4, skill_gap = $5, matched_skills = $6, score_breakdown = $7, updated_at = NOW()`,
+      `INSERT INTO applications (id, job_id, candidate_id, resume_id, match_score, skill_gap, matched_skills, score_breakdown)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE match_score = VALUES(match_score), skill_gap = VALUES(skill_gap), matched_skills = VALUES(matched_skills), score_breakdown = VALUES(score_breakdown), updated_at = NOW()`,
       [
+        uuidv4(),
         jobId,
         candidate.id,
         candidate.resume_id,
@@ -47,11 +93,16 @@ const matchCandidates = async (req, res) => {
       ]
     );
 
+    let candidateSkills = [];
+    try {
+      candidateSkills = typeof candidate.skills === 'string' ? JSON.parse(candidate.skills) : (candidate.skills || []);
+    } catch (e) {}
+
     matchResults.push({
       candidateId: candidate.id,
       name: candidate.name,
       email: candidate.email,
-      skills: candidate.skills,
+      skills: candidateSkills,
       experienceYears: candidate.experience_years,
       matchScore: matchResult.score,
       matchedSkills: matchResult.matchedSkills,
@@ -73,7 +124,9 @@ const matchCandidates = async (req, res) => {
 
 const getCandidates = async (req, res) => {
   const { page = 1, limit = 20, search, jobId } = req.query;
-  const offset = (page - 1) * limit;
+  
+  const parsedLimit = parseInt(limit, 10);
+  const parsedOffset = (parseInt(page, 10) - 1) * parsedLimit;
 
   if (jobId) {
     // Get candidates with scores for a specific job
@@ -81,56 +134,77 @@ const getCandidates = async (req, res) => {
       `SELECT c.*, a.match_score, a.skill_gap, a.matched_skills, a.score_breakdown, a.status, a.pipeline_stage, a.id as application_id
        FROM candidates c
        JOIN applications a ON a.candidate_id = c.id
-       WHERE c.user_id = $1 AND a.job_id = $2
+       WHERE c.user_id = ? AND a.job_id = ?
        ORDER BY a.match_score DESC
-       LIMIT $3 OFFSET $4`,
-      [req.user.id, jobId, limit, offset]
+       LIMIT ? OFFSET ?`,
+      [req.user.id, jobId, parsedLimit, parsedOffset]
     );
-    return res.json({ success: true, candidates: result.rows });
+    const parsedCandidates = result.rows.map(parseCandidate);
+    return res.json({ success: true, candidates: parsedCandidates });
   }
 
-  let whereClause = 'user_id = $1';
+  let whereClause = 'user_id = ?';
   const params = [req.user.id];
 
   if (search) {
-    params.push(`%${search}%`);
-    whereClause += ` AND (name ILIKE $${params.length} OR email ILIKE $${params.length})`;
+    params.push(`%${search}%`, `%${search}%`);
+    whereClause += ` AND (name LIKE ? OR email LIKE ?)`;
   }
 
   const result = await query(
     `SELECT * FROM candidates WHERE ${whereClause}
-     ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-    [...params, limit, offset]
+     ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [...params, parsedLimit, parsedOffset]
   );
 
-  const countResult = await query(`SELECT COUNT(*) FROM candidates WHERE ${whereClause}`, params);
+  const countResult = await query(`SELECT COUNT(*) as count FROM candidates WHERE ${whereClause}`, params);
+  
+  const parsedCandidates = result.rows.map(parseCandidate);
 
   res.json({
     success: true,
-    candidates: result.rows,
-    pagination: { total: parseInt(countResult.rows[0].count), page: parseInt(page), limit: parseInt(limit) },
+    candidates: parsedCandidates,
+    pagination: { total: parseInt(countResult.rows[0].count, 10), page: parseInt(page, 10), limit: parsedLimit },
   });
 };
 
 const getCandidate = async (req, res) => {
   const result = await query(
-    'SELECT * FROM candidates WHERE id = $1 AND user_id = $2',
+    'SELECT * FROM candidates WHERE id = ? AND user_id = ?',
     [req.params.id, req.user.id]
   );
 
   if (!result.rows.length) throw new AppError('Candidate not found', 404);
-  const candidate = result.rows[0];
+  const candidate = parseCandidate(result.rows[0]);
 
   // Get their applications
   const applications = await query(
     `SELECT a.*, j.title as job_title, j.required_skills as job_required_skills
      FROM applications a JOIN jobs j ON a.job_id = j.id
-     WHERE a.candidate_id = $1
+     WHERE a.candidate_id = ?
      ORDER BY a.match_score DESC`,
     [req.params.id]
   );
 
-  candidate.applications = applications.rows;
+  candidate.applications = applications.rows.map(app => {
+    const a = { ...app };
+    try {
+      a.skill_gap = typeof a.skill_gap === 'string' ? JSON.parse(a.skill_gap) : (a.skill_gap || []);
+    } catch (e) {}
+    try {
+      a.matched_skills = typeof a.matched_skills === 'string' ? JSON.parse(a.matched_skills) : (a.matched_skills || []);
+    } catch (e) {}
+    try {
+      a.score_breakdown = typeof a.score_breakdown === 'string' ? JSON.parse(a.score_breakdown) : (a.score_breakdown || {});
+    } catch (e) {}
+    try {
+      a.interview_questions = typeof a.interview_questions === 'string' ? JSON.parse(a.interview_questions) : (a.interview_questions || []);
+    } catch (e) {}
+    try {
+      a.job_required_skills = typeof a.job_required_skills === 'string' ? JSON.parse(a.job_required_skills) : (a.job_required_skills || []);
+    } catch (e) {}
+    return a;
+  });
 
   res.json({ success: true, candidate });
 };
@@ -146,31 +220,32 @@ const updatePipelineStage = async (req, res) => {
 
   const result = await query(
     `UPDATE applications SET
-     pipeline_stage = COALESCE($1, pipeline_stage),
-     status = COALESCE($2, status),
-     notes = COALESCE($3, notes),
+     pipeline_stage = COALESCE(?, pipeline_stage),
+     status = COALESCE(?, status),
+     notes = COALESCE(?, notes),
      updated_at = NOW()
-     WHERE id = $4
-     RETURNING *`,
+     WHERE id = ?`,
     [stage, status, notes, applicationId]
   );
 
-  if (!result.rows.length) throw new AppError('Application not found', 404);
+  if (!result.affectedRows) throw new AppError('Application not found', 404);
 
-  res.json({ success: true, application: result.rows[0] });
+  const updated = await query('SELECT * FROM applications WHERE id = ?', [applicationId]);
+
+  res.json({ success: true, application: updated.rows[0] });
 };
 
 const generateInterviewQuestions = async (req, res) => {
   const { candidateId, jobId } = req.params;
 
-  const candidateResult = await query('SELECT * FROM candidates WHERE id = $1', [candidateId]);
-  const jobResult = await query('SELECT * FROM jobs WHERE id = $1', [jobId]);
+  const candidateResult = await query('SELECT * FROM candidates WHERE id = ?', [candidateId]);
+  const jobResult = await query('SELECT * FROM jobs WHERE id = ?', [jobId]);
 
   if (!candidateResult.rows.length) throw new AppError('Candidate not found', 404);
   if (!jobResult.rows.length) throw new AppError('Job not found', 404);
 
   const applicationResult = await query(
-    'SELECT * FROM applications WHERE candidate_id = $1 AND job_id = $2',
+    'SELECT * FROM applications WHERE candidate_id = ? AND job_id = ?',
     [candidateId, jobId]
   );
 
@@ -183,7 +258,7 @@ const generateInterviewQuestions = async (req, res) => {
   // Save questions
   if (application) {
     await query(
-      'UPDATE applications SET interview_questions = $1 WHERE id = $2',
+      'UPDATE applications SET interview_questions = ? WHERE id = ?',
       [JSON.stringify(questions), application.id]
     );
   }
