@@ -4,32 +4,44 @@ const logger = require('../utils/logger');
 // Destroy cached transporter so a new one is created on next call
 // (useful if env vars change or connection dies)
 let transporter = null;
-
 const createTransporter = () => {
   const user = process.env.SMTP_USER;
-  // Strip all whitespace from app password (Google App Passwords sometimes have spaces)
-  const pass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : undefined;
+  const pass = process.env.SMTP_PASS
+    ? process.env.SMTP_PASS.replace(/\s+/g, '')
+    : undefined;
 
   if (!user || !pass) {
-    logger.warn('SMTP credentials missing — email sending disabled');
+    logger.warn('SMTP credentials missing');
     return null;
   }
 
+  logger.info(`SMTP USER: ${user}`);
+  logger.info(`SMTP PASS: ${pass ? 'SET' : 'MISSING'}`);
+  logger.info(`SMTP HOST: ${process.env.SMTP_HOST || 'smtp.gmail.com'}`);
+  logger.info(`SMTP PORT: ${process.env.SMTP_PORT || 465}`);
+
   return nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,           // STARTTLS
-    auth: { user, pass },
-    // ─── Critical timeouts for Render / cloud environments ───────────────
-    connectionTimeout: 10000,  // 10s to establish TCP connection
-    greetingTimeout: 10000,    // 10s to receive SMTP greeting
-    socketTimeout: 15000,      // 15s of socket inactivity before abort
-    // ─────────────────────────────────────────────────────────────────────
-    tls: {
-      rejectUnauthorized: true,
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT) || 465,
+    secure: true,
+
+    auth: {
+      user,
+      pass,
     },
-    logger: process.env.NODE_ENV !== 'production',
-    debug: false,
+
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
+
+    tls: {
+      rejectUnauthorized: false,
+    },
+
+    debug: true,
+    logger: true,
+
+
   });
 };
 
