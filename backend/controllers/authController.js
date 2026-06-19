@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { query, hasDatabaseConfig, isDatabaseConnected } = require('../config/database');
 const { AppError } = require('../middleware/errorHandler');
-const emailService = require('../services/emailService');
+const { sendOTPBackground } = require('../services/emailService');
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
@@ -89,13 +89,16 @@ const register = async (req, res) => {
         [userId, name, normalizedEmail, passwordHash, otp, otpExpires]
       );
 
-      await emailService.sendOTP(normalizedEmail, name, otp);
-
-      return res.status(201).json({
+      // ✅ Respond immediately — do NOT await email (SMTP can be slow on Render)
+      res.status(201).json({
         success: true,
         message: 'Registration successful. Check your email for OTP.',
         user: { id: userId, name, email: normalizedEmail },
       });
+
+      // Fire-and-forget: send OTP email in background after response is sent
+      sendOTPBackground(normalizedEmail, name, otp);
+      return;
     }
 
     const existingInMemory = getInMemoryUser(normalizedEmail);
@@ -115,9 +118,9 @@ const register = async (req, res) => {
     memoryUser.password_hash = passwordHash;
 
     const { otp } = setInMemoryOtp(memoryUser);
-    await emailService.sendOTP(normalizedEmail, name, otp);
 
-    return res.status(201).json({
+    // ✅ Respond immediately — do NOT await email
+    res.status(201).json({
       success: true,
       message: 'Registration successful. Check your email for OTP.',
       user: {
@@ -126,6 +129,10 @@ const register = async (req, res) => {
         email: memoryUser.email,
       },
     });
+
+    // Fire-and-forget: send OTP email in background
+    sendOTPBackground(normalizedEmail, name, otp);
+    return;
   } catch (error) {
     console.error('AUTH ERROR:', error);
     return res.status(500).json({
@@ -255,8 +262,10 @@ const login = async (req, res) => {
         console.log(`Generated OTP: ${otp}`);
         const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
         await query('UPDATE users SET otp_code = ?, otp_expires_at = ? WHERE id = ?', [otp, otpExpires, user.id]);
-        await emailService.sendOTP(normalizedEmail, user.name, otp);
-        return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+        // ✅ Respond immediately — fire email in background
+        res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+        sendOTPBackground(normalizedEmail, user.name, otp);
+        return;
       }
 
       const { accessToken, refreshToken } = generateTokens(user.id);
@@ -287,8 +296,10 @@ const login = async (req, res) => {
 
     if (!memoryUser.is_verified) {
       const { otp } = setInMemoryOtp(memoryUser);
-      await emailService.sendOTP(normalizedEmail, memoryUser.name, otp);
-      return res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+      // ✅ Respond immediately — fire email in background
+      res.status(403).json({ error: 'Email not verified. A new OTP has been sent.' });
+      sendOTPBackground(normalizedEmail, memoryUser.name, otp);
+      return;
     }
 
     const { accessToken, refreshToken } = generateTokens(memoryUser.id);
@@ -376,9 +387,11 @@ const resendOTP = async (req, res) => {
       const otpExpires = new Date(Date.now() + OTP_EXPIRY_MS);
 
       await query('UPDATE users SET otp_code = ?, otp_expires_at = ? WHERE id = ?', [otp, otpExpires, user.id]);
-      await emailService.sendOTP(normalizedEmail, user.name, otp);
 
-      return res.json({ success: true, message: 'OTP resent successfully' });
+      // ✅ Respond immediately — fire email in background
+      res.json({ success: true, message: 'OTP resent successfully' });
+      sendOTPBackground(normalizedEmail, user.name, otp);
+      return;
     }
 
     const memoryUser = getInMemoryUser(normalizedEmail);
@@ -391,9 +404,11 @@ const resendOTP = async (req, res) => {
     }
 
     const { otp } = setInMemoryOtp(memoryUser);
-    await emailService.sendOTP(normalizedEmail, memoryUser.name, otp);
 
-    return res.json({ success: true, message: 'OTP resent successfully' });
+    // ✅ Respond immediately — fire email in background
+    res.json({ success: true, message: 'OTP resent successfully' });
+    sendOTPBackground(normalizedEmail, memoryUser.name, otp);
+    return;
   } catch (error) {
     console.error('AUTH ERROR:', error);
     return res.status(500).json({
