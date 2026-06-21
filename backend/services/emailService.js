@@ -38,10 +38,8 @@ const createTransporter = () => {
       rejectUnauthorized: false,
     },
 
-    debug: true,
-    logger: true,
-
-
+    debug: true, // 3. Add proper SMTP debugging logs
+    logger: true, // Enables internal nodemailer logging
   });
 };
 
@@ -99,20 +97,38 @@ const sendOTP = async (email, name, otp) => {
   `;
 
   try {
-    await t.sendMail({
+    // 4. Add transporter.verify() before sendMail()
+    logger.info(`[Email] Verifying connection to ${process.env.SMTP_HOST || 'smtp.gmail.com'}...`);
+    await new Promise((resolve, reject) => {
+      t.verify((error, success) => {
+        if (error) {
+          logger.error(`[Email] SMTP Verification Error: ${error.message}`);
+          reject(error);
+        } else {
+          logger.info('[Email] SMTP Connection Verified: Server is ready to take our messages');
+          resolve(success);
+        }
+      });
+    });
+
+    logger.info(`[Email] Attempting to send mail to ${email}...`);
+    const info = await t.sendMail({
       from: `"AI Hiring Platform" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
       to: email,
       subject: `${otp} - Your Verification Code`,
       html,
     });
-    logger.info(`[Email] OTP sent successfully to ${email}`);
+    logger.info(`[Email] OTP sent successfully to ${email}. Message ID: ${info.messageId}`);
     return true;
   } catch (err) {
     // Reset transporter so next call creates a fresh connection
     transporter = null;
 
     logger.error(`[Email] Failed to send OTP to ${email}: ${err.message}`);
+    // 9. Add detailed error logging
     logger.error(`[Email] SMTP error code: ${err.code || 'unknown'}`);
+    logger.error(`[Email] SMTP error command: ${err.command || 'unknown'}`);
+    logger.error(`[Email] Full Error Object: ${JSON.stringify(err, null, 2)}`);
 
     if (process.env.NODE_ENV !== 'production') {
       // In dev, print OTP to console so you can still test
