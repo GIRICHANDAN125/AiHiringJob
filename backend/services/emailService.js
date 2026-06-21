@@ -81,6 +81,10 @@ const sendOTP = async (email, name, otp) => {
   
   // 1. Try Gmail SMTP
   logger.info('[EMAIL] Trying Gmail SMTP...');
+  logger.info(`SMTP_HOST=${process.env.SMTP_HOST}`);
+  logger.info(`SMTP_PORT=${process.env.SMTP_PORT}`);
+  logger.info(`SMTP_USER=${process.env.SMTP_USER}`);
+  logger.info(`SMTP_PASS_EXISTS=${!!process.env.SMTP_PASS}`);
   const t = getTransporter();
   
   if (t) {
@@ -98,7 +102,14 @@ const sendOTP = async (email, name, otp) => {
       return true;
     } catch (err) {
       transporter = null; // Reset transporter on failure
-      logger.error(`[EMAIL] Gmail SMTP Failed: ${err.message}`);
+      logger.error('[EMAIL] Full SMTP Error:', {
+        message: err.message,
+        code: err.code,
+        command: err.command,
+        response: err.response,
+        responseCode: err.responseCode,
+        stack: err.stack
+      });
     }
   } else {
     logger.error('[EMAIL] Gmail SMTP Failed: Transporter not configured.');
