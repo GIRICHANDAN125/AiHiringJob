@@ -18,12 +18,13 @@ const createTransporter = () => {
   logger.info(`SMTP USER: ${user}`);
   logger.info(`SMTP PASS: ${pass ? 'SET' : 'MISSING'}`);
   logger.info(`SMTP HOST: ${process.env.SMTP_HOST || 'smtp.gmail.com'}`);
-  logger.info(`SMTP PORT: ${process.env.SMTP_PORT || 465}`);
+  logger.info(`SMTP PORT: ${process.env.SMTP_PORT || 587}`);
 
+  const port = Number(process.env.SMTP_PORT) || 587;
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: true,
+    port,
+    secure: port === 465, // Must be false for port 587, true for 465
 
     auth: {
       user,
