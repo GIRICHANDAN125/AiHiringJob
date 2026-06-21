@@ -18,7 +18,7 @@ const sendEmailViaResend = async (email, subject, html) => {
 
   try {
     const { data, error } = await resend.emails.send({
-      from: process.env.EMAIL_FROM || 'AI Hiring Platform <onboarding@resend.dev>',
+      from: 'onboarding@resend.dev', // Hardcoded testing domain to prevent Gmail rejection
       to: [email],
       subject,
       html,
