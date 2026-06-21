@@ -12,18 +12,23 @@ const createTransporter = () => {
     return null;
   }
 
-  const port = Number(process.env.SMTP_PORT) || 587;
+  // For Render, Port 465 with implicit SSL is much more reliable than 587 (STARTTLS)
+  const port = Number(process.env.SMTP_PORT) || 465;
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port,
-    secure: port === 465, // true for 465, false for 587
+    secure: port === 465, // MUST be true for port 465, false for 587
     auth: { user, pass },
-    connectionTimeout: 10000, // shorter timeout to failover faster
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-    tls: { rejectUnauthorized: false },
-    debug: false,
-    logger: false, // Turn off inner logs to keep terminal clean with our custom logs
+
+    family: 4, // Bypasses Render's IPv6 DNS issues with Google SMTP
+
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 20000,
+
+    // Turn on logging if we are not in production to debug issues further
+    debug: process.env.NODE_ENV !== 'production',
+    logger: process.env.NODE_ENV !== 'production'
   });
 };
 
@@ -80,14 +85,7 @@ const sendOTP = async (email, name, otp) => {
   
   if (t) {
     try {
-      // Fast verify before sending
-      await new Promise((resolve, reject) => {
-        t.verify((error, success) => {
-          if (error) reject(error);
-          else resolve(success);
-        });
-      });
-
+      // Removed t.verify() overhead. t.sendMail will naturally fail if the connection doesn't work.
       await t.sendMail({
         from: `"AI Hiring Platform" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
         to: email,
