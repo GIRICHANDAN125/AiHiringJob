@@ -1,46 +1,29 @@
 const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
+const { sendEmailViaResend } = require('./resendService');
 
-// Destroy cached transporter so a new one is created on next call
-// (useful if env vars change or connection dies)
 let transporter = null;
 const createTransporter = () => {
   const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS
-    ? process.env.SMTP_PASS.replace(/\s+/g, '')
-    : undefined;
+  const pass = process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : undefined;
 
   if (!user || !pass) {
-    logger.warn('SMTP credentials missing');
+    logger.warn('[EMAIL] SMTP credentials missing');
     return null;
   }
-
-  logger.info(`SMTP USER: ${user}`);
-  logger.info(`SMTP PASS: ${pass ? 'SET' : 'MISSING'}`);
-  logger.info(`SMTP HOST: ${process.env.SMTP_HOST || 'smtp.gmail.com'}`);
-  logger.info(`SMTP PORT: ${process.env.SMTP_PORT || 587}`);
 
   const port = Number(process.env.SMTP_PORT) || 587;
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port,
-    secure: port === 465, // Must be false for port 587, true for 465
-
-    auth: {
-      user,
-      pass,
-    },
-
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-
-    tls: {
-      rejectUnauthorized: false,
-    },
-
-    debug: true, // 3. Add proper SMTP debugging logs
-    logger: true, // Enables internal nodemailer logging
+    secure: port === 465, // true for 465, false for 587
+    auth: { user, pass },
+    connectionTimeout: 10000, // shorter timeout to failover faster
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+    tls: { rejectUnauthorized: false },
+    debug: false,
+    logger: false, // Turn off inner logs to keep terminal clean with our custom logs
   });
 };
 
@@ -52,25 +35,9 @@ const getTransporter = () => {
 };
 
 /**
- * sendOTP — sends an OTP email.
- *
- * IMPORTANT: This function NEVER throws.
- * All errors are caught internally and logged.
- * Callers do NOT need to await this — it is designed to be fire-and-forget.
- *
- * @returns {Promise<boolean>} true if sent, false if failed
+ * Generates the HTML template for the OTP email.
  */
-const sendOTP = async (email, name, otp) => {
-  const t = getTransporter();
-  if (!t) {
-    logger.warn(`[Email] Transporter not configured — skipping OTP email to ${email}`);
-    if (process.env.NODE_ENV !== 'production') {
-      logger.info(`[DEV] OTP for ${email}: ${otp}`);
-    }
-    return false;
-  }
-
-  const html = `
+const getOTPHtml = (name, otp) => `
   <!DOCTYPE html>
   <html>
   <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -95,63 +62,74 @@ const sendOTP = async (email, name, otp) => {
     <p style="color: #cbd5e1; font-size: 12px; text-align: center;">AI Hiring Platform &copy; ${new Date().getFullYear()}</p>
   </body>
   </html>
-  `;
+`;
 
-  try {
-    // 4. Add transporter.verify() before sendMail()
-    logger.info(`[Email] Verifying connection to ${process.env.SMTP_HOST || 'smtp.gmail.com'}...`);
-    await new Promise((resolve, reject) => {
-      t.verify((error, success) => {
-        if (error) {
-          logger.error(`[Email] SMTP Verification Error: ${error.message}`);
-          reject(error);
-        } else {
-          logger.info('[Email] SMTP Connection Verified: Server is ready to take our messages');
-          resolve(success);
-        }
+/**
+ * sendOTP — sends an OTP email. Tries SMTP first, falls back to Resend.
+ * @returns {Promise<boolean>} true if sent, false if failed
+ */
+const sendOTP = async (email, name, otp) => {
+  const subject = `${otp} - Your Verification Code`;
+  const html = getOTPHtml(name, otp);
+  
+  let smtpSuccess = false;
+  
+  // 1. Try Gmail SMTP
+  logger.info('[EMAIL] Trying Gmail SMTP...');
+  const t = getTransporter();
+  
+  if (t) {
+    try {
+      // Fast verify before sending
+      await new Promise((resolve, reject) => {
+        t.verify((error, success) => {
+          if (error) reject(error);
+          else resolve(success);
+        });
       });
-    });
 
-    logger.info(`[Email] Attempting to send mail to ${email}...`);
-    const info = await t.sendMail({
-      from: `"AI Hiring Platform" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
-      to: email,
-      subject: `${otp} - Your Verification Code`,
-      html,
-    });
-    logger.info(`[Email] OTP sent successfully to ${email}. Message ID: ${info.messageId}`);
-    return true;
-  } catch (err) {
-    // Reset transporter so next call creates a fresh connection
-    transporter = null;
+      await t.sendMail({
+        from: `"AI Hiring Platform" <${process.env.EMAIL_FROM || process.env.SMTP_USER}>`,
+        to: email,
+        subject,
+        html,
+      });
 
-    logger.error(`[Email] Failed to send OTP to ${email}: ${err.message}`);
-    // 9. Add detailed error logging
-    logger.error(`[Email] SMTP error code: ${err.code || 'unknown'}`);
-    logger.error(`[Email] SMTP error command: ${err.command || 'unknown'}`);
-    logger.error(`[Email] Full Error Object: ${JSON.stringify(err, null, 2)}`);
-
-    if (process.env.NODE_ENV !== 'production') {
-      // In dev, print OTP to console so you can still test
-      logger.info(`[DEV] OTP for ${email}: ${otp}`);
+      logger.info(`[EMAIL] SMTP Success. OTP sent to ${email}`);
+      smtpSuccess = true;
+      return true;
+    } catch (err) {
+      transporter = null; // Reset transporter on failure
+      logger.error(`[EMAIL] Gmail SMTP Failed: ${err.message}`);
     }
+  } else {
+    logger.error('[EMAIL] Gmail SMTP Failed: Transporter not configured.');
+  }
 
-    // NEVER re-throw — email failure must never crash registration
-    return false;
+  // 2. Fallback to Resend API
+  if (!smtpSuccess) {
+    logger.info('[EMAIL] Switching to Resend...');
+    const resendSuccess = await sendEmailViaResend(email, subject, html);
+    
+    if (resendSuccess) {
+      return true;
+    } else {
+      logger.error(`[EMAIL] Both SMTP and Resend failed to send OTP to ${email}.`);
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info(`[DEV] OTP for ${email}: ${otp}`);
+      }
+      return false;
+    }
   }
 };
 
 /**
  * sendOTPBackground — fire-and-forget wrapper.
  * Call this when you don't want to await email sending.
- * The HTTP response is sent before the email completes.
  */
 const sendOTPBackground = (email, name, otp) => {
-  // Intentionally not awaited
   sendOTP(email, name, otp).catch((err) => {
-    // This catch is a safety net — sendOTP itself never throws,
-    // but just in case something unexpected happens.
-    logger.error(`[Email] Unexpected error in background send: ${err.message}`);
+    logger.error(`[EMAIL] Unexpected error in background send: ${err.message}`);
   });
 };
 
