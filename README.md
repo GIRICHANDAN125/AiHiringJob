@@ -499,7 +499,7 @@ kubectl get pods -n ai-hiring -w
 ### Scaling Strategy
 
 - Backend pods are stateless — scale horizontally with `kubectl scale deployment/backend --replicas=N` or attach a Horizontal Pod Autoscaler (HPA) on CPU utilization (not yet included — see Future Enhancements).
-- The shared uploads PVC means any replica can serve any user's files, avoiding sticky-session requirements.
+- The shared uploads PVC means any replica can serve any user's files, avoiding sticky-session requirements Improved project overview.
 
 ---
 
